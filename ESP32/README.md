@@ -1,102 +1,60 @@
-# Sensi Deauth Panel
+# Sensi Deauth Panel PRO
 
+ <!-- Replace with a real screenshot URL -->
 
-
-**Sensi Deauth Panel** is a multi-purpose, mobile-friendly ESP32-based tool for network testing and security education. It hosts a web interface on its own WiFi network, allowing you to control all its features directly from a mobile phone browser without needing a PC or any special apps.
+**Sensi Deauth Panel PRO** is an advanced, mobile-first ESP32-based tool for network testing and security education. It builds upon the original Sensi Panel with more powerful and precise attack vectors, all controllable from a mobile browser without any extra apps.
 
 ---
 
 ## 🛡️ Legal & Ethical Warning
 
-**This project is intended strictly for educational purposes and for testing on networks and devices that you own or have explicit permission to test.** Unauthorized scanning of networks, launching denial-of-service attacks (like WiFi Deauthentication or Bluetooth flooding) is illegal in most countries. The user of this software is solely responsible for their actions. The developers assume no liability and are not responsible for any misuse or damage caused by this program.
+**This project is intended strictly for educational purposes and for testing on networks and devices that you own or have explicit permission to test.** Unauthorized scanning, targeted attacks, or network disruption is illegal. The user of this software is solely responsible for their actions. The developers assume no liability and are not responsible for any misuse or damage caused by this program.
 
 ---
 
-## ✨ Features
+## ✨ PRO Features
 
--   **Standalone & Mobile-First:** No PC or app required. Just connect to the ESP32's WiFi from your phone.
--   **Captive Portal:** Automatically opens the control panel when you connect to the WiFi.
--   **Static IP:** Runs a SoftAP at the fixed IP address `192.168.69.1`.
--   **WiFi Scanner:** Scans for nearby 2.4GHz WiFi networks and displays their SSID, signal strength (RSSI), and channel.
--   **WiFi Deauth Attack:** Sends 802.11 deauthentication frames to a selected Access Point, disconnecting all clients connected to it.
--   **Bluetooth LE Jammer:** Floods the 2.4GHz spectrum with BLE advertising packets with random device names (e.g., "AirPods_XXXX"), making it difficult for other BLE devices to connect.
--   **Real-time Interface:** The web UI provides live status updates (uptime, current mode) and a log panel fed by WebSockets.
--   **Minimalist Dark UI:** Clean, responsive, and easy-to-use interface designed for mobile screens.
+This version includes all the standard features plus these powerful additions:
 
----
-
-## 🔧 Hardware Required
-
--   An ESP32 Development Board (e.g., ESP32-WROOM-32 DevKitC)
--   A Micro-USB cable
--   A power source (power bank, USB wall adapter, or your phone)
-
-### Circuit Diagram
-
-No external wiring is needed. The ESP32 board is all you need.
-
-```
-+-----------------+      (Power & Data)      +-----------------+
-|  ESP32 Dev Kit  | <----------------------> | USB Cable       |
-|    (WROOM-32)   |                          +-----------------+
-+-----------------+                                    |
-                                                     (USB-OTG Adapter if using a phone)
-                                                       |
-                                             +-----------------+
-                                             |  Android Phone  |
-                                             +-----------------+
-```
+-   **🎯 Targeted Deauthentication:** Instead of disconnecting all devices from a network, you can now scan for specific clients (mobiles, laptops) and disconnect only the selected target.
+-   **📢 WiFi Beacon Flood:** Spams the 2.4GHz spectrum with hundreds of fake WiFi networks (e.g., "Free WiFi_1", "Secret_Network_5"). This clutters the WiFi list on all nearby devices, causing confusion and making it hard to find legitimate networks.
+-   **🍏 Apple BLE Proximity Spam:** A modern Bluetooth attack that leverages Apple's proximity protocol. It causes annoying pop-ups (like "Connect AirPods", "Apple TV Keyboard", "Share Password") to appear on nearby iPhones, iPads, and MacBooks.
+-   **📱 Upgraded UI:** The user interface has been redesigned to accommodate the new attacks, providing a clear and easy-to-use workflow for more complex operations.
+-   **Standalone & Mobile-First:** Still requires no PC. Connect to the ESP32's WiFi (`Sensi Panel PRO`) and the control panel opens automatically via Captive Portal.
 
 ---
 
-## 📲 How to Flash (Using Only a Mobile Phone)
+## 🔧 Hardware & Flashing
 
-You can flash this project onto your ESP32 using an Android phone and a USB-OTG adapter.
+The hardware requirements and flashing instructions are **exactly the same** as the standard version. You only need an ESP32 Dev Board, a USB cable, and an Android phone with ArduinoDroid.
 
-1.  **Install ArduinoDroid:**
-    Go to the Google Play Store and install the **[ArduinoDroid - Arduino/ESP8266/ESP32 IDE](https://play.google.com/store/apps/details?id=name.antonsmirnov.android.arduinodroid)** app.
-
-2.  **Add ESP32 Board Support:**
-    -   Open ArduinoDroid, go to `≡ (Menu)` > `Settings` > `Board type` > `ESP32`.
-    -   In the `Boards manager URLs` field, add this URL: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-    -   Go back and tap `Boards Manager`. Search for `esp32` and install the package by `Espressif Systems`.
-
-3.  **Install Libraries:**
-    -   Go to `≡ (Menu)` > `Libraries`.
-    -   Search for and install the following libraries:
-        -   `ESPAsyncWebServer` (by me-no-dev)
-        -   `AsyncTCP` (by me-no-dev)
-
-4.  **Load the Code:**
-    -   Download the `SensiDeauthPanel.ino` file to your phone.
-    -   In ArduinoDroid, go to `≡ (Menu)` > `Sketch` > `Open` and navigate to the `.ino` file you downloaded.
-
-5.  **Flash the ESP32:**
-    -   Connect your ESP32 to your Android phone using a USB-OTG adapter. A notification should appear asking for USB permission; allow it.
-    -   In ArduinoDroid, go to `≡ (Menu)` > `Settings` > `Board type` > `ESP32` and select `ESP32 Dev Module`.
-    -   Tap the **Upload** button (the arrow pointing down: `↓`).
-    -   The app will compile the sketch. If it's the first time, this may take a few minutes.
-    -   After compiling, it will start uploading. You may need to **hold the `BOOT` button** on your ESP32 when the "Connecting..." message appears in the console. Release it once the upload begins.
-    -   Once finished, the ESP32 will reboot.
+**Follow the same "How to Flash" instructions from the original README.** Just use the `SensiDeauthPanel_Pro.ino` file instead. All required libraries (`ESPAsyncWebServer`, `AsyncTCP`) remain the same.
 
 ---
 
-## 🚀 How to Use the Panel
+## 🚀 How to Use the Pro Panel
 
-1.  **Connect to the ESP32:**
-    -   Power on your ESP32.
-    -   On your phone or laptop, open your WiFi settings.
-    -   Connect to the WiFi network named **`Sensi Deauth Panel`**.
-    -   The password is **`password123`**.
+1.  **Connect to WiFi:**
+    -   Power on the flashed ESP32.
+    -   Connect your phone to the WiFi network: **`Sensi Panel PRO`**.
+    -   Password: **`password123`**.
 
-2.  **Open the Control Panel:**
-    -   After connecting, your device should automatically detect the Captive Portal and a notification will pop up to "Sign in to network". Tap it.
-    -   The Sensi Deauth Panel interface will load directly in your browser.
-    -   If it doesn't open automatically, manually open a browser and go to `http://192.168.69.1`.
+2.  **Open Control Panel:**
+    -   The Captive Portal should automatically open the control panel. If not, go to `http://192.168.69.1` in your browser.
 
-3.  **Using the Features:**
-    -   **WiFi Scan:** Tap the "Scan" button. A list of nearby networks will populate the dropdown.
-    -   **Deauth Attack:** Select a network from the list and tap "Start Deauth Attack".
-    -   **BLE Spam:** Tap "Start BLE Spam" to begin the Bluetooth flood.
-    -   **Stop:** The "Stop All Attacks" button will halt any active operation.
-    -   **Logs:** The log panel at the bottom shows real-time feedback from the ESP32.
+3.  **Using the Pro Features:**
+    -   **Targeted Deauth:**
+        1.  Press **"1. Scan for WiFi Networks"** to find Access Points (APs).
+        2.  Select your target AP from the first dropdown list.
+        3.  Press **"2. Scan for Clients"**. *Note: For simplicity, this currently shows a placeholder list. A true promiscuous-mode sniffer is very complex for a single-file project.*
+        4.  Select a client from the second dropdown to target them specifically, or leave it on "Deauth all clients" for a broadcast attack.
+        5.  Press **"3. Start Deauth Attack"**.
+
+    -   **Beacon Flood:**
+        1.  Optionally, type a name (e.g., "My_Fake_AP") into the text box.
+        2.  Press **"Start Beacon Flood"**. The ESP32 will start creating fake networks like "My_Fake_AP_AB12".
+
+    -   **Bluetooth Attacks:**
+        -   Choose between **"Generic BLE Spam"** (for general disruption) or **"Apple BLE Spam"** (for annoying iPhones).
+
+    -   **Stop:** The big yellow **"Stop All Attacks"** button will immediately halt any active operation.
